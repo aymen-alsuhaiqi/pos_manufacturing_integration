@@ -38,6 +38,75 @@ class PosOrder(models.Model):
                         "manufacturing but has no valid Bill of Materials.",
                         product=product.display_name
                     ))
+        
+                # Check stock availability for BoM components
+                order._check_components_availability(line, bom)
+
+    def _check_components_availability(self, line, bom):
+        """Check if all BoM components have sufficient stock for manufacturing.
+        
+        :param line: pos.order.line record
+        :param bom: mrp.bom record
+        :raises UserError: if any component has insufficient stock
+        """
+        self.ensure_one()
+        
+        # Get the manufacturing location from the warehouse
+        warehouse = self.env['stock.warehouse'].search([
+            ('company_id', '=', self.company_id.id)
+        ], limit=1)
+        
+        if not warehouse:
+            raise UserError(_("لم يتم العثور على ستودع لشركة '%(company)s'.", 
+                            company=self.company_id.name))
+        
+        # Get the location where raw materials are stored (stock location)
+        location = warehouse.lot_stock_id
+        
+        # Explode the BoM to get all components and their quantities
+        boms, bom_lines = bom.explode(line.product_id, line.qty)
+        
+        insufficient_components = []
+        
+        for bom_line, line_data in bom_lines:
+            component = bom_line.product_id
+            required_qty = line_data['qty']
+            
+            # Get available quantity in stock location
+            available_qty = component.with_context(
+                location=location.id
+            ).qty_available
+            
+            if available_qty < required_qty:
+                insufficient_components.append({
+                    'product': component.display_name,
+                    'required': required_qty,
+                    'available': available_qty,
+                    'shortage': required_qty - available_qty,
+                    'uom': bom_line.product_uom_id.name,
+                })
+        
+        if insufficient_components:
+            # Build error message with details of all missing components
+            error_lines = []
+            for comp in insufficient_components:
+                error_lines.append(
+                    _("  • %(product)s: يتطلب %(required).2f %(uom)s, المتاح %(available).2f %(uom)s (النقص: %(shortage).2f)",
+                      product=comp['product'],
+                      required=comp['required'],
+                      available=comp['available'],
+                      shortage=comp['shortage'],
+                      uom=comp['uom'])
+                )
+            
+            raise UserError(_(
+                "لايمكن تصنيع المنتج '%(product)s'.\n\n"
+                "لعدم وجود كمية كافية من\n%(components)s",
+                product=line.product_id.display_name,
+                components='\n'.join(error_lines)
+            ))
+
+
                 
     def _create_manufacturing_orders(self):
         """Create Manufacturing Orders for products configured for POS manufacturing."""
