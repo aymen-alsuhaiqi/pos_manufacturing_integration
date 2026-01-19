@@ -9,7 +9,9 @@
     """,
     'author': 'Aymen Alsuhaiqi',
     'depends': ['point_of_sale', 'mrp'],
-    'data': [
+    "data": [
+        "views/mrp_production_views.xml",
+        "views/product_template_views.xml"
     ],
     'installable': True,
     'application': False,
